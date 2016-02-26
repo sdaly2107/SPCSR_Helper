@@ -3,11 +3,23 @@
 
 Dealing with SharePoint Client Side rendering can be painful at times and time consuming having to create lots of boiler plate to perform simple tasks.  This library was created to lift some of that pain.  Mainly it provides the following - 
 
--CSR Template hooking instead of overriding - if you create an override you don't have to work out the correct default template to return, your hooks are passed the default template.  It's up to you if you want to modify the template or just do something else in the hook, for example register a validator.
+-CSR Template hooking instead of overriding - if you create an override you don't have to work out the correct default template to return, your hooks are passed the default template for the relevant form.  It's up to you if you want to modify the template or just do something else in the hook, for example just register a validator.
 
--You no longer have to create an override just to get ctx.CurrentItem or ctx.ControlMode - just call SPCSR.CurrentItem or SPCSR.ControlMode to determine which form you are on.
+-Hook all templates in a single matcher - useful for debugging templates.
+
+-Errors within template overrides are usually difficult to track down since SP code catches any errors.  The library checks for ctx.Errors and outputs them to the console.
+
+-You no longer have to create an override just to get ctx.CurrentItem or ctx.ControlMode - call SPCSR.CurrentItem or SPCSR.ControlMode to determine which form you are on.
 
 -Field schema IDs are captured so elements on the UI can be found in a more robust manner using SPCSR.Utils.FindField()
+
+-Display templates are wrapped with a span tag with ID in the standard format of name_schemaID_type to allow searching of UI elements when in the display form.  By default the only handle you have is an html comment with the field internal name.
+
+-Easy disabling of fields (async callbacks supported too)
+
+-XML Special character encoding and decoding 
+
+-Other useful helper methods and custom validators
 
 
 
