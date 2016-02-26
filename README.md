@@ -207,8 +207,3 @@ var decoded = SPCSR.Encoding.EncodeXMLSpecialChars(internalName);
 console.log(decoded); //gives 'My Field?'
 
 
-
-OTHERS
-******
-
-There's a few other little helpers in there too, for example email validator, functions to check if user is in groups etc. The main reason for this lib was for the CSR hook helper stuff though. 
