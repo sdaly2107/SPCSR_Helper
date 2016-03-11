@@ -56,7 +56,8 @@ SPCSR.Encoding = (function() {
 
     //TODO: Complete with all from https://www.w3.org/Style/XSL/TestSuite/results/4/XEP/symbol.pdf
     var mappings = {
-        'x0020': ' ',
+        'x005F': '_',
+		'x0020': ' ',
         'x0021': '!',
         'x0023': '#',
         'x0025': '%',
@@ -74,10 +75,9 @@ SPCSR.Encoding = (function() {
         'x003D': '=',
         'x003E': '>',
         'x005B': '[',
-        'x005D': ']',
-        'x005F': '_',
+        'x005D': ']',        
         'x007B': '{',
-        'x003C': '|',
+        'x007C': '|',
         'x007D': '}'
     };
 
@@ -121,10 +121,12 @@ SPCSR.Encoding = (function() {
 
 })();
 
+
 SPCSR.Permissions = (function() {
-
-    var _groups = null;
-
+	
+	var _groupsCache = null;
+	var _ctx = null;
+		
     return {
 
         GetCurrentUser: getCurrentUser,
@@ -135,12 +137,17 @@ SPCSR.Permissions = (function() {
 
         var deferred = jQuery.Deferred();
 
+		if(null !== _ctx){
+			
+			deferred.resolve(_ctx);
+		}
+		
         ExecuteOrDelayUntilScriptLoaded(function() {
 
-            var ctx = SP.ClientContext.get_current();
-            deferred.resolve(ctx);
+            _ctx = SP.ClientContext.get_current();
+            deferred.resolve(_ctx);
 
-        }, 'sp.js');
+        }.bind(this), 'sp.js');
 
         return deferred.promise();
     }
@@ -149,7 +156,7 @@ SPCSR.Permissions = (function() {
 
         var deferred = jQuery.Deferred();
 
-        getContext().then(function(context) {
+        jQuery.when(getContext()).then(function(context) {
 
 
             var currentUser = context.get_web()
@@ -174,59 +181,70 @@ SPCSR.Permissions = (function() {
     }
 
 
-
     function isUserInGroups(names) {
-
+		
         if (typeof names === 'string') {
 
             names = [names];
         }
+		
+		var _names = names;
+		
 
         var deferred = jQuery.Deferred();
 
-        if (null === _groups) {
+        if (null === _groupsCache) {
 
-            getContext().then(function(context) {
+             jQuery.when(getContext()).then(function(context){
+				
                 var currentUser = context.get_web().get_currentUser();
                 var groups = currentUser.get_groups();
                 context.load(currentUser);
                 context.load(groups);
                 context.executeQueryAsync(
                     function onGroupsLoaded(sender, args) {
-                        _groups = [];
+					
+						if(null !== _groupsCache){
+							
+							 deferred.resolve(checkIfUserIsInGroup());
+						}
+						
+						var groupNames = [];
                         var e = groups.getEnumerator();
                         while (e.moveNext()) {
 
-                            _groups.push(e.get_current().get_title());
+                            groupNames.push(e.get_current().get_title());
                         }
+						
+						_groupsCache = groupNames;
 
-                        checkIfUserIsInGroup();
+                        deferred.resolve(checkIfUserIsInGroup());
 
-                    },
+                    }.bind(this),
                     function OnGroupsLoadFailure(sender, args) {
 
                         deferred.fail(sender, args);
                     }
                 );
-            });
+
+            }.bind(this));
 
         } else {
-
-            checkIfUserIsInGroup(); //groups cached so check now
+             deferred.resolve(checkIfUserIsInGroup()); //groups cached so check now
         }
 
         function checkIfUserIsInGroup() {
 
-            for (var groupIndex = 0; groupIndex < _groups.length; ++groupIndex) {
+            for (var groupIndex = 0; groupIndex < _groupsCache.length; ++groupIndex) {
 
-                var groupTitle = _groups[groupIndex];
-                if (names.indexOf(groupTitle) !== -1) {
+                var groupTitle = _groupsCache[groupIndex];
+                if (_names.indexOf(groupTitle) !== -1) {
 
-                    deferred.resolve(true);
+                    return true;
                 }
             }
 
-            deferred.resolve(false);
+           return false;
         }
 
         return deferred.promise();
