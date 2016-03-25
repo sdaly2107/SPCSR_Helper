@@ -130,7 +130,8 @@ SPCSR.Permissions = (function() {
     return {
 
         GetCurrentUser: getCurrentUser,
-        IsUserInGroups: isUserInGroups
+        IsUserInGroups: isUserInGroups,
+		IsUserInGroupsSync: isUserInGroupsSync
     };
 
     function getContext() {
@@ -139,7 +140,7 @@ SPCSR.Permissions = (function() {
 
 		if(null !== _ctx){
 			
-			deferred.resolve(_ctx);
+			return _ctx;
 		}
 		
         ExecuteOrDelayUntilScriptLoaded(function() {
@@ -157,7 +158,6 @@ SPCSR.Permissions = (function() {
         var deferred = jQuery.Deferred();
 
         jQuery.when(getContext()).then(function(context) {
-
 
             var currentUser = context.get_web()
                 .get_currentUser();
@@ -180,75 +180,95 @@ SPCSR.Permissions = (function() {
         return deferred.promise();
     }
 
-
     function isUserInGroups(names) {
 		
         if (typeof names === 'string') {
 
             names = [names];
         }
-		
-		var _names = names;
-		
-
+				
         var deferred = jQuery.Deferred();
 
-        if (null === _groupsCache) {
+		 jQuery.when(getContext()).then(function(context){
+			
+			var currentUser = context.get_web().get_currentUser();
+			var groups = currentUser.get_groups();
+			context.load(currentUser);
+			context.load(groups);
+			context.executeQueryAsync(
+				function onGroupsLoaded(sender, args) {
+			
+					var e = groups.getEnumerator();
+					while (e.moveNext()) {
 
-             jQuery.when(getContext()).then(function(context){
-				
-                var currentUser = context.get_web().get_currentUser();
-                var groups = currentUser.get_groups();
-                context.load(currentUser);
-                context.load(groups);
-                context.executeQueryAsync(
-                    function onGroupsLoaded(sender, args) {
-					
-						if(null !== _groupsCache){
-							
-							 deferred.resolve(checkIfUserIsInGroup());
+						var grouptitle = e.get_current().get_title();
+						if(names.indexOf(grouptitle) !== -1){
+							deferred.resolve(true);
 						}
-						
-						var groupNames = [];
-                        var e = groups.getEnumerator();
-                        while (e.moveNext()) {
+					}
+					
+					deferred.resolve(false);
 
-                            groupNames.push(e.get_current().get_title());
-                        }
-						
-						_groupsCache = groupNames;
+				}.bind(this),
+				function OnGroupsLoadFailure(sender, args) {
 
-                        deferred.resolve(checkIfUserIsInGroup());
+					deferred.fail(sender, args);
+				}
+			);
 
-                    }.bind(this),
-                    function OnGroupsLoadFailure(sender, args) {
+		}.bind(this));
 
-                        deferred.fail(sender, args);
-                    }
-                );
-
-            }.bind(this));
-
-        } else {
-             deferred.resolve(checkIfUserIsInGroup()); //groups cached so check now
-        }
-
-        function checkIfUserIsInGroup() {
-
-            for (var groupIndex = 0; groupIndex < _groupsCache.length; ++groupIndex) {
-
-                var groupTitle = _groupsCache[groupIndex];
-                if (_names.indexOf(groupTitle) !== -1) {
-
-                    return true;
-                }
-            }
-
-           return false;
-        }
-
+       
         return deferred.promise();
     }
+	
+	function checkIfUserIsInGroup(name) {
+
+		if(!_groupsCache.hasOwnProperty(name)){
+			
+			return null;
+		 }
+	
+		return _groupsCache[name];
+    }
+	
+	//useful for using pre CSR setup
+	function isUserInGroupSyncCall(name){
+			
+		var isMember = false;
+		
+		jQuery.ajax({
+			url: _spPageContextInfo.webAbsoluteUrl + "/_api/web/sitegroups/getByName('" + name + "')/Users?$filter=Id eq " + _spPageContextInfo.userId,
+			method: 'GET',
+			headers: { 'Accept': 'application/json; odata=verbose'},
+			success: function (data) {
+				
+				if(1 === data.d.results.length){
+				
+					isMember = true;
+				}
+			},
+			async: false
+			});
+		
+		return isMember;
+	}
+	
+	function isUserInGroupsSync(name){
+	
+		if(null === _groupsCache){
+			
+			_groupsCache = {};
+		}
+		
+		var inGroup = checkIfUserIsInGroup(name);
+		if(null === inGroup){
+			
+			_groupsCache[name] = isUserInGroupSyncCall(name);
+		}
+	
+		return checkIfUserIsInGroup(name);
+	}
 
 })();
 
@@ -337,7 +357,7 @@ SPCSR.Utils = (function() {
 
         var hookedCall = function SPCSRHookTemplate(ctx) {
 
-            var html = templateFixes(ctx, originalCall(ctx)); //originalCall may be default or custom template 
+            var html = originalCall(ctx); //originalCall may be default or custom template 
 
             return hook(ctx, html);
         };
@@ -373,7 +393,7 @@ SPCSR.Utils = (function() {
             }
         };
 
-        // window.console && console.log(hookedTemplates);
+         //window.console && console.log(hookedTemplates);
 
         SPClientTemplates.TemplateManager.RegisterTemplateOverrides(hookedTemplates);
     }
@@ -407,20 +427,9 @@ SPCSR.Utils = (function() {
             name === 'Modified';
     }
 
-    function templateFixes(ctx, html) {
-
-        if (ctx.CurrentFieldSchema.FieldType === 'Note') {
-
-            //if disabling template then enabling, note field does not show with border, fix css
-            html = html.replace('ms-rtestate-field ms-rtefield', 'ms-rtestate-field ms-rtefield ms-inputBox ms-inputBoxActive');
-        }
-
-        return html;
-    }
-
-
     function hook(ctx, html) {
 
+	
         var fieldInternalName = ctx.CurrentFieldSchema.Name;
         var fieldType = ctx.CurrentFieldSchema.FieldType;
 
@@ -434,9 +443,6 @@ SPCSR.Utils = (function() {
             displayViewName = displayNames[SPClientTemplates.ClientControlMode.DisplayForm];
         }
 
-        var ctxCopy = deepCopy(ctx); //important, getReadOnlyTemplate prepares and updates some values on ctx, so we must copy
-        var defaultDisplayTemplate = getReadOnlyTemplate(ctxCopy);
-
         if (ctx.ControlMode === SPClientTemplates.ClientControlMode.DisplayForm) {
 
             html = wrapWithSpanIdentifier(html, ctx); //add span with ID of name_schemaID_ so elements can be found on display page
@@ -447,7 +453,7 @@ SPCSR.Utils = (function() {
             html: html,
             enabled: true, //set to false to always use a display template - cannot be used in async callbacks since field will be rendered already
             defaultHtml: html, //hold onto original templates incase user toggles between enabled and disabled states
-            defaultDisplayHtml: defaultDisplayTemplate,
+            defaultDisplayHtml: '',
             update: function(html) { //allows updating of field html after rendering
 
                 findField(fieldInternalName).replaceWith(html);
@@ -495,6 +501,7 @@ SPCSR.Utils = (function() {
 
                         ctx.FormContext.registerGetValueCallback(fieldInternalName, function() { //SP gets values from DOM to save, since we are using a display template we have to provide the values
 
+		
                             if (fieldType === 'User' || fieldType === 'UserMulti') { //SP people picker template gets value to save from hidden field, we need to build this json up ourself
 
                                 var userString = buildUserValueString(SPCSR.CurrentItem[fieldInternalName]);
@@ -519,6 +526,7 @@ SPCSR.Utils = (function() {
                         //original peoplepicker callback calls EnsurePeoplePickerScript(InitControl) which does some dom manipulation and fails because elements don't exist if using display template.  if the template is disabled after rendering, for example from an async call then this won't take effect, because the init callback will have already run.
                         if (fieldType === 'User' || fieldType === 'UserMulti') {
 
+						
                             ctx.FormContext.registerInitCallback(fieldInternalName, function() {
 
                             });
@@ -542,8 +550,13 @@ SPCSR.Utils = (function() {
             }
         }
 
+		
+		var ctxCopy = deepCopy(ctx); //important, getReadOnlyTemplate prepares and updates some values on ctx, so we must copy
+		var defaultDisplayTemplate = getReadOnlyTemplate(ctxCopy, template.html);
+		
         if (!template.enabled) {
 
+			template.defaultDisplayHtml = defaultDisplayTemplate; //hold on to this incase user disables later
             template.html = defaultDisplayTemplate; //use display template
         }
 
@@ -637,7 +650,7 @@ SPCSR.Utils = (function() {
     }
 
 
-    function prepareField(ctx) {
+    function prepareNonDisplayValueForDisplayTemplate(ctx) {
 
         var fieldtype = ctx.CurrentFieldSchema.FieldType;
 
@@ -648,27 +661,65 @@ SPCSR.Utils = (function() {
         } else if (fieldtype === 'MultiChoice') {
 
             prepareMultiChoiceFieldValue(ctx);
-
-        } else if (fieldtype === 'Note') {
+		
+        }else if (fieldtype === 'Note') {
 
             prepareNoteFieldValue(ctx);
         }
     }
 
-    function getReadOnlyTemplate(ctx) {
+    function getReadOnlyTemplate(ctx, defaultHtml) {
 
-        var displayMode = SPClientTemplates.ClientControlMode.DisplayForm;
+		//for the readonly template we use the default edit template, this allows us to differentiate between readonly mode in edit and display mode
+		//also ctx.CurrentItem field values are formatted server side and are sometimes different in display mode and edit mode, ex boolean fields are formatted as yes/no in display, but 0/1 in edit/new.
+		//datetime is formatted with 24hour settings in display, but 24 hour in edit/new mode, we don't want the hassle of working our the format ourself
+	
+		if(defaultHtml === ''){
+			
+			return defaultHtml
+		}
+	
+		var elem = jQuery(jQuery.parseHTML('<div>' + defaultHtml + '</div>')); //add html in div so when we call html() later, we get the 'outerhtml', not html of first element
+	
+		elem.find('*').prop('disabled', 'disabled'); //add disabled prop to default edit html
+				
+		var type = ctx.CurrentFieldSchema.FieldType;
+		
+		if(ctx.ControlMode !== SPClientTemplates.ClientControlMode.DisplayForm){
+			
+			var displayTemplateFn = defaultTemplates.Templates.Fields[type][displayNames[SPClientTemplates.ClientControlMode.DisplayForm]];
+			
+			switch (type){
+				
+				case 'DateTime':
+				
+					elem.find('a').remove(); //remove icon to open date picker
+					
+					break;
+				case 'Note':
 
-        prepareField(ctx);
+					var noteHtml = displayTemplateFn(ctx);
+						
+					return wrapWithSpanIdentifier(noteHtml, ctx);
 
-        var fnDefaultDisplayTemplate = defaultTemplates.Templates.Fields[ctx.CurrentFieldSchema.FieldType][displayNames[displayMode]];
-
-        var html = fnDefaultDisplayTemplate(ctx);
-
-        //in non display mode, fields have an ID made up of name_schemID_type, in display mode there is no identifier so we add one here
-        html = wrapWithSpanIdentifier(html, ctx);
-
-        return html;
+					break;
+				case 'User':
+				case 'UserMulti':
+				
+					prepareNonDisplayValueForDisplayTemplate(ctx);
+									
+					var peoplePickerHtml = displayTemplateFn(ctx);
+					
+					return wrapWithSpanIdentifier(peoplePickerHtml, ctx);
+					
+					break;
+				default:
+			}
+		}
+				
+		var html = elem.html();
+		
+		return html;
     }
 
     function prepareUserFieldValue(ctx) {
